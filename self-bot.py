@@ -1,7 +1,7 @@
 # self-bot.py
 # Discord Voice Presence Tool - 24/7
 # Supports DAVE protocol (March 2026+)
-# Deploy on Render.com with environment variables
+# Library: discord.py-self[voice]
 
 import asyncio
 import logging
@@ -9,8 +9,8 @@ import os
 import sys
 from threading import Thread
 
+import discord
 from flask import Flask, jsonify
-from djs_selfbot_v13 import Client
 
 # -------------------------------
 # Logging Setup
@@ -18,32 +18,28 @@ from djs_selfbot_v13 import Client
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 log = logging.getLogger(__name__)
 
 # -------------------------------
 # Read configuration from environment
 # -------------------------------
-TOKEN      = os.environ.get("DISCORD_TOKEN")
-GUILD_ID   = os.environ.get("GUILD_ID")
-CHANNEL_ID = os.environ.get("CHANNEL_ID")
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")   # اختياري للإشعارات
+TOKEN       = os.environ.get("DISCORD_TOKEN")
+CHANNEL_ID  = os.environ.get("CHANNEL_ID")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")  # اختياري
 
 if not TOKEN:
-    log.error("❌ DISCORD_TOKEN environment variable not set.")
+    log.error("❌ DISCORD_TOKEN not set.")
     sys.exit(1)
-if not GUILD_ID or not CHANNEL_ID:
-    log.error("❌ GUILD_ID and CHANNEL_ID must be set.")
+if not CHANNEL_ID:
+    log.error("❌ CHANNEL_ID not set.")
     sys.exit(1)
 
 try:
-    GUILD_ID   = int(GUILD_ID)
     CHANNEL_ID = int(CHANNEL_ID)
 except ValueError:
-    log.error("❌ GUILD_ID and CHANNEL_ID must be valid integers.")
+    log.error("❌ CHANNEL_ID must be a valid integer.")
     sys.exit(1)
 
 # -------------------------------
@@ -84,7 +80,7 @@ Thread(target=run_web, daemon=True).start()
 # -------------------------------
 # Discord Self-Bot Client
 # -------------------------------
-client = Client()
+client = discord.Client()
 
 async def send_webhook(message: str):
     """إرسال إشعار عبر Discord Webhook (اختياري)"""
@@ -109,18 +105,20 @@ async def join_voice(retry: bool = False):
     for attempt in range(1, max_attempts + 1):
         try:
             log.info(f"🎤 Attempt {attempt}/{max_attempts} to join channel {CHANNEL_ID}...")
-            channel = await client.fetch_channel(CHANNEL_ID)
+            channel = client.get_channel(CHANNEL_ID)
+            if channel is None:
+                channel = await client.fetch_channel(CHANNEL_ID)
 
-            if not hasattr(channel, "connect"):
+            if not isinstance(channel, discord.VoiceChannel):
                 log.error(f"❌ Channel {CHANNEL_ID} is not a voice channel.")
                 await client.close()
                 return
 
             await channel.connect()
 
-            bot_status["in_voice"]      = True
-            bot_status["channel_name"]  = channel.name
-            bot_status["guild_name"]    = channel.guild.name
+            bot_status["in_voice"]     = True
+            bot_status["channel_name"] = channel.name
+            bot_status["guild_name"]   = channel.guild.name
 
             log.info(f"✅ Connected to [{channel.name}] in [{channel.guild.name}]")
             log.info("🔊 Staying in voice channel indefinitely...")
@@ -138,11 +136,11 @@ async def join_voice(retry: bool = False):
         except Exception as e:
             log.warning(f"⚠️ Attempt {attempt} failed: {e}")
             if attempt < max_attempts:
-                wait = 10 * attempt   # انتظار تدريجي: 10s, 20s, 30s...
+                wait = 10 * attempt  # انتظار تدريجي: 10s, 20s, 30s...
                 log.info(f"⏳ Retrying in {wait}s...")
                 await asyncio.sleep(wait)
             else:
-                log.error("❌ All attempts failed. Will retry on disconnect event.")
+                log.error("❌ All attempts failed.")
                 await send_webhook("❌ **Bot failed** to join voice after 5 attempts.")
 
 @client.event
@@ -159,16 +157,9 @@ async def on_voice_state_update(member, before, after):
         bot_status["in_voice"]     = False
         bot_status["channel_name"] = None
         log.warning("⚠️ Disconnected from voice! Reconnecting in 5s...")
-        await send_webhook("⚠️ **Disconnected** from voice channel. Reconnecting...")
+        await send_webhook("⚠️ **Disconnected** from voice. Reconnecting...")
         await asyncio.sleep(5)
         await join_voice(retry=True)
 
-@client.event
-async def on_error(event, *args, **kwargs):
-    log.error(f"❌ Discord error in [{event}]: {sys.exc_info()}")
-
-# -------------------------------
-# Run
-# -------------------------------
 log.info("🚀 Starting Discord Voice Presence Bot...")
 client.run(TOKEN)
