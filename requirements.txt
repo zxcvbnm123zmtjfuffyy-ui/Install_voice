@@ -1,0 +1,3 @@
+djs-selfbot-v13==3.7.28
+Flask>=3.0.3
+gunicorn>=21.2.0
