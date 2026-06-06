@@ -92,10 +92,14 @@ async def send_webhook(message: str):
         req = urllib.request.Request(
             WEBHOOK_URL,
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "DiscordBot (voice-presence, 1.0)"
+            },
             method="POST"
         )
         urllib.request.urlopen(req, timeout=5)
+        log.info("🔔 Webhook sent successfully.")
     except Exception as e:
         log.warning(f"⚠️ Webhook failed: {e}")
 
@@ -114,13 +118,14 @@ async def join_voice(retry: bool = False):
                 await client.close()
                 return
 
-            await channel.connect()
+            await channel.connect(self_mute=True, self_deaf=True)
 
             bot_status["in_voice"]     = True
             bot_status["channel_name"] = channel.name
             bot_status["guild_name"]   = channel.guild.name
 
             log.info(f"✅ Connected to [{channel.name}] in [{channel.guild.name}]")
+            log.info("🔇 Microphone and headset muted.")
             log.info("🔊 Staying in voice channel indefinitely...")
 
             if retry:
