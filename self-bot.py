@@ -28,8 +28,21 @@ log = logging.getLogger(__name__)
 # ─────────────────────────────────────
 # Config
 # ─────────────────────────────────────
-CHANNEL_ID  = os.environ.get("CHANNEL_ID")
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+CHANNEL_ID = os.environ.get("CHANNEL_ID")
+
+# ويب هوك عام — يستلم إشعارات كل الحسابات (اختياري)
+WEBHOOK_GLOBAL = os.environ.get("WEBHOOK_URL", "")
+
+# ويب هوك خاص لكل حساب: WEBHOOK_URL_1, WEBHOOK_URL_2, ...
+# لو ما وضعت واحد خاص يستخدم العام تلقائياً
+WEBHOOK_PER_ACCOUNT: dict[int, str] = {}
+_wi = 1
+while True:
+    _w = os.environ.get(f"WEBHOOK_URL_{_wi}")
+    if not _w:
+        break
+    WEBHOOK_PER_ACCOUNT[_wi] = _w
+    _wi += 1
 
 if not CHANNEL_ID:
     log.error("❌ CHANNEL_ID not set.")
@@ -66,13 +79,12 @@ log.info(f"📋 Loaded {len(TOKENS)} account(s).")
 # ─────────────────────────────────────
 # Webhook
 # ─────────────────────────────────────
-async def send_webhook(message: str):
-    if not WEBHOOK_URL:
-        return
+async def _post_webhook(url: str, message: str):
+    """إرسال فعلي لويب هوك واحد"""
     try:
         data = json.dumps({"content": message}).encode()
         req = urllib.request.Request(
-            WEBHOOK_URL, data=data,
+            url, data=data,
             headers={
                 "Content-Type": "application/json",
                 "User-Agent": "DiscordBot (voice-presence, 1.0)"
@@ -82,6 +94,22 @@ async def send_webhook(message: str):
         urllib.request.urlopen(req, timeout=5)
     except Exception as e:
         log.warning(f"⚠️ Webhook failed: {e}")
+
+async def send_webhook(message: str, account_index: int = 0):
+    """
+    إرسال إشعار:
+    - الويب هوك الخاص بالحساب (لو موجود)
+    - الويب هوك العام (لو موجود) — دايماً يستلم كل شيء
+    """
+    tasks = []
+    # ويب هوك خاص بالحساب
+    if account_index and account_index in WEBHOOK_PER_ACCOUNT:
+        tasks.append(_post_webhook(WEBHOOK_PER_ACCOUNT[account_index], message))
+    # ويب هوك عام — يستلم من كل الحسابات
+    if WEBHOOK_GLOBAL:
+        tasks.append(_post_webhook(WEBHOOK_GLOBAL, message))
+    if tasks:
+        await asyncio.gather(*tasks)
 
 # ─────────────────────────────────────
 # AccountBot — كل حساب مستقل بالكامل
@@ -132,7 +160,8 @@ class AccountBot:
                 )
                 await send_webhook(
                     f"⚠️ **{self.tag}** خرج من الفويس، "
-                    f"إعادة اتصال خلال {delay:.0f} ثانية..."
+                    f"إعادة اتصال خلال {delay:.0f} ثانية...",
+                    self.index
                 )
                 await asyncio.sleep(delay)
                 await self._join_voice(retry=True)
@@ -174,11 +203,13 @@ class AccountBot:
                     await send_webhook(
                         f"✅ **{self.tag}** رجع للفويس "
                         f"`{channel.name}` "
-                        f"(إعادة اتصال #{self.status['reconnect_count']})"
+                        f"(إعادة اتصال #{self.status['reconnect_count']})",
+                        self.index
                     )
                 else:
                     await send_webhook(
-                        f"✅ **{self.tag}** دخل الفويس `{channel.name}`"
+                        f"✅ **{self.tag}** دخل الفويس `{channel.name}`",
+                        self.index
                     )
                 return
 
@@ -192,7 +223,8 @@ class AccountBot:
                     self.status["failed"] = True
                     log.error(f"❌ {self.tag} All attempts failed. Giving up.")
                     await send_webhook(
-                        f"❌ **{self.tag}** فشل بعد {self.MAX_ATTEMPTS} محاولات."
+                        f"❌ **{self.tag}** فشل بعد {self.MAX_ATTEMPTS} محاولات.",
+                        self.index
                     )
 
     # ── Start ────────────────────────────────────────
